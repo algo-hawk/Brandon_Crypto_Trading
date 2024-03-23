@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import random
-
+import streamlit as st
 
 class Strategy(ABC):
     def __init__(self, data):
@@ -70,11 +70,11 @@ class MomentumBasedTradingStrategy(Strategy):
 
     def get_parameter_ranges(self):
         return {
-            'short_ema_window': range(5, 51),  # Adjusted as per strategy focus
-            'long_ema_window': range(30, 101),
-            'rsi_window': range(14, 31),
-            'rsi_buy_threshold': range(30, 51),
-            'rsi_sell_threshold': range(50, 71),
+            'short_ema_window': (5, 51),  # Adjusted as per strategy focus
+            'long_ema_window': (30, 101),
+            'rsi_window': (14, 31),
+            'rsi_buy_threshold': (30, 51),
+            'rsi_sell_threshold': (50, 71),
         }
 
     def generate_signals(self, data):
@@ -111,9 +111,6 @@ class MomentumBasedTradingStrategy(Strategy):
 
         return historical_data[['close', 'short_ema', 'long_ema', 'RSI', 'signal', 'state', 'open', 'high', 'low']]
 
-
-
-
     def evaluate_strategy(self, risk_free_rate=0.0):
         data = self.generate_signals(self.data)
         data['returns'] = data['close'].pct_change()
@@ -132,17 +129,64 @@ class MomentumBasedTradingStrategy(Strategy):
         drawdown = (cumulative_returns - peak) / peak
         max_drawdown = drawdown.min()
 
-        # Sharpe Ratio (Risk-Free Rate Will Change Upon Timeframe)
-        annualized_return = np.power((1 + data['strategy_returns']).prod(), 252 / len(data)) - 1
-        annualized_std = data['strategy_returns'].std() * np.sqrt(252)
-        sharpe_ratio = (annualized_return - risk_free_rate) / annualized_std
-
         # Compile metrics into a dictionary
         metrics = {
             'total_return': total_return,
             'win_rate': win_rate,
             'max_drawdown': max_drawdown,
-            'sharpe_ratio': sharpe_ratio,
         }
 
-        return metrics
+        return metrics, data
+
+    def optimize(self, data, iterations, metric_weights):
+        if metric_weights is None:
+            metric_weights = {
+                'total_return': 1.0,
+                'win_rate': 1.0,
+                'max_drawdown': -1.0,  # Negative since we want to minimize drawdown
+            }
+
+        best_score = -np.inf
+        best_params = {}
+        random.seed(42)  # Setting a random seed for reproducibility
+
+        parameter_ranges = self.get_parameter_ranges()
+
+        for i in range(iterations):
+            params = {k: random.choice(range(*v)) for k, v in parameter_ranges.items()}
+            self.update_parameters(params)
+            metrics, data = self.evaluate_strategy(data)  # Ensure this method returns the necessary metrics
+            score = self.calculate_score(metrics, metric_weights)
+
+            if score > best_score:
+                best_score = score
+                best_params = params
+        return best_params
+
+    def calculate_score(self, metrics, metric_weights):
+        # Calculate score
+        score = sum(metrics[metric] * weight for metric, weight in metric_weights.items())
+        return score
+
+    def update_parameters(self, params):
+        for param, value in params.items():
+            setattr(self, param, value)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

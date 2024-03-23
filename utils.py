@@ -1,5 +1,6 @@
 import datetime
 import time
+import numpy as np
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 
@@ -12,10 +13,12 @@ def get_since_timestamp(days=0, weeks=0, months=0, years=0):
     return since_timestamp
 
 
+#Need to fix this fucking plot on rsi thing
 def plot_rsi_ema_strategy(data):
     """
     1. Strategy 1 Plot (RSI and EMA Strategy)
     """
+    data = data.replace([np.inf, -np.inf], np.nan).dropna(subset=["RSI"])
     # Create a subplot with 2 rows
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         vertical_spacing=0.02, subplot_titles=('Price and Trade Signals', 'RSI Indicator'),
@@ -45,6 +48,8 @@ def plot_rsi_ema_strategy(data):
     fig.add_hline(y=30, line_dash="dot", line_color="green", annotation_text="Oversold", row=2, col=1)
 
     # Update layout
-    fig.update_layout(height=800, title='Price Action and RSI Indicator', xaxis_title='Date', yaxis_title='Price',
-                      xaxis_rangeslider_visible=False)
+    fig.update_layout(height=800, title='Price Action and RSI Indicator', xaxis_title='Date', yaxis_title='Price',xaxis_rangeslider_visible=False)
+
+    # Specify the range for the RSI subplot's y-axis
+    fig.update_yaxes(range=[0, 100], row=2, col=1)
     return fig
