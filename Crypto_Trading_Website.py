@@ -26,41 +26,54 @@ class KrakenWebsiteTrader:
     def pull_strategy_data(self, symbol, strategy_key):
         params = strategy_params[strategy_key]
         data = self.kraken_client.get_ohlc_data(symbol, params["interval"], params["since"])
-        print(data)
+        #print(data)
         return data
-
-
 
     def run(self):
         symbol, selected_strategy_key = self.setup_page()
+
+        # Initialize 'iterations' in session state if it's not already set
+        if 'iterations' not in st.session_state:
+            st.session_state['iterations'] = 100
+
+        # Declare the number_input with session state variable as the default value
+        # The value in the widget will be automatically stored in 'st.session_state.iterations'
+        iterations = st.number_input(
+            'Number of iterations for optimization:',
+            min_value=10,
+            max_value=1000000,
+            value=st.session_state['iterations'],
+            step=10,
+            key='iterations'  # Unique key for the widget to maintain its state
+        )
+
         if st.button("Analyze Strategy With Optimized Params"):
             data = self.pull_strategy_data(symbol, selected_strategy_key)
             if data is not None:
                 st.title("Optimize Momentum Trading Strategy")
 
-                iterations = st.number_input('Number of iterations for optimization:', min_value=10, max_value=1000000,value=100, step=10)
-
-                strategy = MomentumBasedTradingStrategy(data)
-
                 # Retrieve weight list from strategy parameters
                 metric_weights = strategy_params[selected_strategy_key]['weight_list']
 
-                # Pass the update_progress function directly
-                best_params = strategy.optimize(data, iterations, metric_weights)
+                # Initialize the strategy with data
+                strategy = MomentumBasedTradingStrategy(data)
+
+                # Run the optimization process
+                best_params = strategy.optimize(st.session_state['iterations'], metric_weights)
 
                 st.write("Optimization Completed.")
                 st.write("Best Parameters Found:", best_params)
 
-                #Update Strategy Params
+                # Update Strategy Params
                 strategy.update_parameters(best_params)
 
                 # Run strategy with optimized parameters
                 metrics, optimized_signals = strategy.evaluate_strategy()
-                print(optimized_signals)
-
                 st.write('Metrics of Optimized Strategy:')
-                st.write(metrics)
-                optimized_plot = plot_rsi_ema_strategy(optimized_signals)
+                st.json(metrics)  # Using st.json for better formatting of dictionary
+
+                # Plot the strategy signals
+                optimized_plot = plot_rsi_ema_strategy(optimized_signals, strategy.rsi_buy_threshold, strategy.rsi_sell_threshold)
                 st.plotly_chart(optimized_plot, use_container_width=True)
 
 
@@ -70,56 +83,48 @@ class KrakenWebsiteTrader:
 strategy_params = {
     "intraday_15m": {
         "interval": 15,
-        "since": get_since_timestamp(days=1),
-        "weight_list": {
-            'total_return': .5,
-            'win_rate': .4,
-            'max_drawdown': .1,  # Less emphasis on drawdown for shorter strategies
-        }
-    },
-    "intraday_1h": {
-        "interval": 60,
         "since": get_since_timestamp(weeks=1),
         "weight_list": {
-            'total_return': .5,
-            'win_rate': 0.4,
-            'max_drawdown': 0.1,
+            'total_return': 1,
+            'win_rate': 0,
+            'max_drawdown': 0,
         }
     },
+
     "intraday_4h": {
         "interval": 240,
-        "since": get_since_timestamp(weeks=2),
+        "since": get_since_timestamp(weeks=3),
         "weight_list": {
-            'total_return': 0.5,
-            'win_rate': 0.4,
-            'max_drawdown': 0.1,
+            'total_return': 1,
+            'win_rate': 0,
+            'max_drawdown': 0,
         }
     },
     "short_term": {
         "interval": 240,
-        "since": get_since_timestamp(months=1),
+        "since": get_since_timestamp(months=2),
         "weight_list": {
-            'total_return': 0.25,
-            'win_rate': 0.25,
-            'max_drawdown': 0.25,
+            'total_return': 1,
+            'win_rate': 0,
+            'max_drawdown': 0,
         }
     },
     "medium_term": {
         "interval": 1440,
-        "since": get_since_timestamp(months=4),
+        "since": get_since_timestamp(months=6),
         "weight_list": {
-            'total_return': 0.2,
-            'win_rate': 0.2,
-            'max_drawdown': 0.3,  # Increasing emphasis on drawdown
+            'total_return': 1,
+            'win_rate': 0,
+            'max_drawdown': 0,  # Increasing emphasis on drawdown
         }
     },
     "long_term": {
         "interval": 1440,
         "since": get_since_timestamp(years=1),
         "weight_list": {
-            'total_return': 0.15,
-            'win_rate': 0.15,
-            'max_drawdown': 0.35,
+            'total_return': 1,
+            'win_rate': 0,
+            'max_drawdown': 0,
         }
     },
 }

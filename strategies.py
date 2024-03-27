@@ -68,19 +68,22 @@ class MomentumBasedTradingStrategy(Strategy):
         self.rsi_buy_threshold = 30
         self.rsi_sell_threshold = 70
 
+        #SUPER FUCKING IMPORTANT THE DATA IS BACKWARDS FROM EXCHANGE NEED TO REVERSE IT
+        self.data.sort_index(ascending=True, inplace=True)
+
     def get_parameter_ranges(self):
         return {
-            'short_ema_window': (5, 51),  # Adjusted as per strategy focus
-            'long_ema_window': (30, 101),
-            'rsi_window': (14, 31),
+            'short_ema_window': (5, 35),  # Adjusted as per strategy focus
+            'long_ema_window': (12, 80),
+            'rsi_window': (5, 60),
             'rsi_buy_threshold': (30, 51),
             'rsi_sell_threshold': (50, 71),
         }
 
-    def generate_signals(self, data):
-        historical_data = data.copy()
+    def generate_signals(self):
+        historical_data = self.data.copy()
 
-        #Calculate indicators
+        # Calculate indicators
         historical_data['short_ema'] = historical_data['close'].ewm(span=self.short_ema_window, adjust=False).mean()
         historical_data['long_ema'] = historical_data['close'].ewm(span=self.long_ema_window, adjust=False).mean()
         delta = historical_data['close'].diff()
@@ -90,41 +93,64 @@ class MomentumBasedTradingStrategy(Strategy):
         ema_down = down.ewm(com=self.rsi_window - 1, adjust=False).mean()
         rs = ema_up / ema_down
         historical_data['RSI'] = 100 - (100 / (1 + rs))
-        historical_data['signal'] = 0
 
-        # Initialize a column for state tracking
-        historical_data['state'] = None  # No position ('buy', 'sell', or 'short')
-        last_state = None
+        historical_data['signal'] = 0  # Initialize signals column
+
+        # Check if the initial condition is a buy
+        if historical_data['short_ema'].iloc[0] > historical_data['long_ema'].iloc[0] and historical_data['RSI'].iloc[
+            0] > self.rsi_buy_threshold:
+            historical_data.at[historical_data.index[0], 'signal'] = 1
+            in_position = True
+        else:
+            in_position = False
 
         for i in range(1, len(historical_data)):
-            if last_state != 'buy' and historical_data.loc[historical_data.index[i], 'short_ema'] > historical_data.loc[historical_data.index[i], 'long_ema'] and historical_data.loc[historical_data.index[i], 'RSI'] > self.rsi_buy_threshold:
-                historical_data.loc[historical_data.index[i], 'signal'] = 1
-                historical_data.loc[historical_data.index[i], 'state'] = 'buy'
-                last_state = 'buy'
-            elif last_state != 'sell' and (historical_data.loc[historical_data.index[i], 'short_ema'] < historical_data.loc[historical_data.index[i], 'long_ema'] or historical_data.loc[historical_data.index[i], 'RSI'] < self.rsi_sell_threshold):
-                historical_data.loc[historical_data.index[i], 'signal'] = -1
-                historical_data.loc[historical_data.index[i], 'state'] = 'sell'
-                last_state = 'sell'
-            else:
-                historical_data.loc[historical_data.index[i], 'signal'] = 0
-                historical_data.loc[historical_data.index[i], 'state'] = last_state  # Maintain last state if no change
+            # Buy Condition: Not in position, Short EMA > Long EMA, RSI above buy threshold
+            if not in_position and historical_data['short_ema'].iloc[i] > historical_data['long_ema'].iloc[i] and \
+                    historical_data['RSI'].iloc[i] > self.rsi_buy_threshold:
+                #print('made it to buy first')
+                historical_data.at[historical_data.index[i], 'signal'] = 1
+                in_position = True
+            # Sell Condition: In position, Short EMA < Long EMA, RSI below sell threshold
+            elif in_position and historical_data['short_ema'].iloc[i] < historical_data['long_ema'].iloc[i] and \
+                    historical_data['RSI'].iloc[i] < self.rsi_sell_threshold:
+                #print('made it to sell first')
+                historical_data.at[historical_data.index[i], 'signal'] = -1
+                in_position = False
 
-        return historical_data[['close', 'short_ema', 'long_ema', 'RSI', 'signal', 'state', 'open', 'high', 'low']]
-
+        return historical_data[['close', 'short_ema', 'long_ema', 'RSI', 'signal', 'open', 'high', 'low']]
     def evaluate_strategy(self, risk_free_rate=0.0):
-        data = self.generate_signals(self.data)
-        data['returns'] = data['close'].pct_change()
-        data['strategy_returns'] = data['returns'] * data['signal'].shift(1)
+        # Generate signals
+        data = self.generate_signals()
 
-        # Total Return
+        # Calculate daily returns
+        data['returns'] = data['close'].pct_change()
+
+        # Track whether we are holding the asset
+        holding = False
+
+        # Track the strategy returns
+        data['strategy_returns'] = 0.0
+
+        # Evaluate strategy returns based on holding periods
+        for i in range(1, len(data)):
+            if data.at[data.index[i], 'signal'] == 1:  # Buy signal
+                holding = True
+            elif data.at[data.index[i], 'signal'] == -1 and holding:  # Sell signal
+                holding = False
+
+            # If we are holding, calculate the strategy's returns
+            if holding:
+                data.at[data.index[i], 'strategy_returns'] = data.at[data.index[i], 'returns']
+
+        # Total Return of the strategy
         total_return = data['strategy_returns'].sum()
 
-        # Win Rate
-        wins = data['strategy_returns'] > 0
-        win_rate = wins.sum() / wins.count()
+        # Win Rate: percentage of positive returns
+        win_rate = (data['strategy_returns'] > 0).mean()
 
         # Maximum Drawdown
-        cumulative_returns = (1 + data['strategy_returns']).cumprod()
+        cumulative_returns = (1 + data['strategy_returns'].cumsum())
         peak = cumulative_returns.expanding(min_periods=1).max()
         drawdown = (cumulative_returns - peak) / peak
         max_drawdown = drawdown.min()
@@ -136,26 +162,27 @@ class MomentumBasedTradingStrategy(Strategy):
             'max_drawdown': max_drawdown,
         }
 
+
         return metrics, data
 
-    def optimize(self, data, iterations, metric_weights):
+    def optimize(self, iterations, metric_weights):
         if metric_weights is None:
             metric_weights = {
                 'total_return': 1.0,
-                'win_rate': 1.0,
-                'max_drawdown': -1.0,  # Negative since we want to minimize drawdown
+                'win_rate': 0,
+                'max_drawdown': 0,  # Negative since we want to minimize drawdown
             }
 
         best_score = -np.inf
         best_params = {}
-        random.seed(42)  # Setting a random seed for reproducibility
+        #random.seed(42)  # Setting a random seed for reproducibility
 
         parameter_ranges = self.get_parameter_ranges()
 
         for i in range(iterations):
             params = {k: random.choice(range(*v)) for k, v in parameter_ranges.items()}
             self.update_parameters(params)
-            metrics, data = self.evaluate_strategy(data)  # Ensure this method returns the necessary metrics
+            metrics, data = self.evaluate_strategy()  # Ensure this method returns the necessary metrics
             score = self.calculate_score(metrics, metric_weights)
 
             if score > best_score:
